@@ -6,7 +6,9 @@ import (
 	"image/color"
 	"log"
 	"math"
+	"runtime"
 	"sync"
+	"time"
 
 	"github.com/fogleman/gg"
 	"github.com/golang/freetype/truetype"
@@ -18,14 +20,14 @@ import (
 // 1 m/s = 2.2369 mph
 const MPS_CONVERT = 2.2369
 
+var minLat, maxLat, minLong, maxLong = 90., -90., 90., -90.
+
 func main() {
-	activities, err := tcx.ReadFile("Harvard_Road_Race.tcx")
+	activities, err := tcx.ReadFile("Harvard_Road_Race.tcx") // Put your TCX filename here
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-
-	minLat, maxLat, minLong, maxLong := activities.Acts.Act[0].Laps[0].Trk.Pt[0].Lat, activities.Acts.Act[0].Laps[0].Trk.Pt[0].Lat, activities.Acts.Act[0].Laps[0].Trk.Pt[0].Long, activities.Acts.Act[0].Laps[0].Trk.Pt[0].Long
 
 	coords := []coord{}
 
@@ -45,7 +47,7 @@ func main() {
 		}
 	}
 
-	fmt.Printf("%10.10f %10f %10f %10f\n", minLat, maxLat, minLong, maxLong)
+	fmt.Printf("%10.10f lat %10f %10f long %10f\n", minLat, maxLat, minLong, maxLong)
 
 	miniMap := drawMap(coords)
 
@@ -53,13 +55,22 @@ func main() {
 
 	for _, activity := range activities.Acts.Act {
 		for _, lap := range activity.Laps {
-			limit := 200
+			limit := 20
 			for i := range len(lap.Trk.Pt) - 1 {
-				pt := lap.Trk.Pt[i]
-				ptNext := lap.Trk.Pt[i+1]
 				if i >= limit {
 					break
 				}
+				pt := lap.Trk.Pt[i]
+				ptNext := lap.Trk.Pt[i+1]
+
+				timeDiff := ptNext.Time.Sub(pt.Time)
+				if timeDiff > time.Second {
+					// Verify we have a track point for every second otherwise the resulting video will be messed up
+					// TODO: actually just handle this
+					fmt.Printf("SAW BIG TIME %v at %d. The resulting video will be messed up", timeDiff, i)
+				}
+
+				// Interpolate data between each trackpoint to make video smoother
 				fts = append(fts, frameTelemetry{
 					Power: pt.Power,
 					Speed: pt.Speed,
@@ -101,13 +112,14 @@ func main() {
 
 	work := make(chan *frameWork)
 	wg := sync.WaitGroup{}
-	for range 8 {
+	numWorkers := runtime.GOMAXPROCS(0)
+	fmt.Printf("Starting %d workers\n", numWorkers)
+	for range numWorkers {
 		wg.Go(func() {
 			font, err := truetype.Parse(gomonobold.TTF)
 			if err != nil {
 				log.Fatal(err)
 			}
-
 			bigFace := truetype.NewFace(font, &truetype.Options{Size: 75})
 			smallFace := truetype.NewFace(font, &truetype.Options{Size: 55})
 			for ft := range work {
@@ -146,8 +158,9 @@ type frameTelemetry struct {
 
 func generateImage(frameTelemetry *frameTelemetry, i int, staticImg image.Image, bigFace, smallFace font.Face) {
 	ggCtx := gg.NewContext(1920, 1080)
-	ggCtx.SetRGB(0, 1, 0)
+	ggCtx.SetRGBA(0, 0, 0, 0)
 	ggCtx.Clear()
+	ggCtx.SetRGBA(0, 0, 0, 1)
 	ggCtx.DrawImage(staticImg, 0, 0) // TODO: use contexts smarter to make this faster?
 	//Big Fonts
 	ggCtx.SetFontFace(bigFace)
@@ -229,16 +242,17 @@ func drawStringDropShadow(ggCtx *gg.Context, s string, x, y float64) {
 
 func scaleGPS(lat float64, long float64) (float64, float64) {
 	// technically this should probably use minLat and minLong and the scale factor is 1 / (max - min)
-	scaleFactor := 3_546.1 * 15
-	lat = lat - 42.291441
-	lat = lat * scaleFactor * -1
+	normalizeFactor := (1. / (maxLat - minLat))
+	scaleFactor := 275. // How tall in pixels
+	lat = lat - minLat
+	lat = lat * normalizeFactor * -1 * scaleFactor
 
 	//x = x / -42.291723
-	long = long + 71.196479
+	long = long - minLong
 	//y = y / 71.196104
-	long = long * scaleFactor
+	long = long * scaleFactor * normalizeFactor
 
-	return lat + 1050, long + 1850
+	return lat + 1050, long + 1625
 }
 
 type coord struct {
