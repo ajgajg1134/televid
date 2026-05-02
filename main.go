@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"log"
 	"math"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -20,10 +21,28 @@ import (
 // 1 m/s = 2.2369 mph
 const MPS_CONVERT = 2.2369
 
+// 1 m/s = 3.6 kph
+const KMPH_CONVERT = 3.6
+
 var minLat, maxLat, minLong, maxLong = 90., -90., 90., -90.
 
 func main() {
-	activities, err := tcx.ReadFile("Harvard_Road_Race.tcx") // Put your TCX filename here
+	// Uncomment to get cpu profiles for pprof
+	//prof, err := os.Create("profile.pprof")
+	// defer prof.Close()
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// pprof.StartCPUProfile(prof)
+	// defer pprof.StopCPUProfile()
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run main.go <TCX filename>")
+		return
+	}
+
+	filename := os.Args[1]
+
+	activities, err := tcx.ReadFile(filename)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -31,6 +50,7 @@ func main() {
 
 	coords := []coord{}
 
+	// TODO: Move the map builder to use the interpolated points for a cleaner looking map
 	for _, activity := range activities.Acts.Act {
 		for _, lap := range activity.Laps {
 			for _, trackpoint := range lap.Trk.Pt {
@@ -55,7 +75,7 @@ func main() {
 
 	for _, activity := range activities.Acts.Act {
 		for _, lap := range activity.Laps {
-			limit := 20
+			limit := 50_000
 			for i := range len(lap.Trk.Pt) - 1 {
 				if i >= limit {
 					break
@@ -157,16 +177,17 @@ type frameTelemetry struct {
 }
 
 func generateImage(frameTelemetry *frameTelemetry, i int, staticImg image.Image, bigFace, smallFace font.Face) {
-	ggCtx := gg.NewContext(1920, 1080)
-	ggCtx.SetRGBA(0, 0, 0, 0)
-	ggCtx.Clear()
+	ggCtx := gg.NewContextForImage(staticImg)
+	// ggCtx.SetRGBA(0, 0, 0, 0)
+	// ggCtx.Clear()
 	ggCtx.SetRGBA(0, 0, 0, 1)
-	ggCtx.DrawImage(staticImg, 0, 0) // TODO: use contexts smarter to make this faster?
-	//Big Fonts
 	ggCtx.SetFontFace(bigFace)
 	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f mph", frameTelemetry.Speed*MPS_CONVERT), 20, 95)
 
 	ggCtx.SetFontFace(smallFace)
+	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f", frameTelemetry.Speed*KMPH_CONVERT), 50, 160)
+	drawStringDropShadow(ggCtx, "kph", 200, 160)
+
 	drawStringDropShadow(ggCtx, fmt.Sprintf("%04.0f w", frameTelemetry.Power), 55, 1050)
 	drawWattBox(ggCtx, frameTelemetry.Power)
 
@@ -181,23 +202,28 @@ func generateImage(frameTelemetry *frameTelemetry, i int, staticImg image.Image,
 	ggCtx.SavePNG(fmt.Sprintf("imgs/%04d.png", i))
 }
 
-func drawWattBox(ggCtx *gg.Context, watts float64) {
-	height, width, x, y := 50., 270., 55., 950.
+// GradientStop configures a color stop for the gradient
+type GradientStop struct {
+	Offset float64
+	Color  color.RGBA
+}
+
+func drawBox(ggCtx *gg.Context, value float64, x, y, height, width float64, strokeColor color.RGBA, maxVal, displayMax float64, stops []GradientStop) {
 	grad := gg.NewLinearGradient(x, y, x+width, y+height)
 
-	// https://uigradients.com/#KingYna
-	grad.AddColorStop(0, color.RGBA{R: 26, G: 42, B: 252, A: 255})
-	grad.AddColorStop(0.5, color.RGBA{R: 178, G: 31, B: 0x1f, A: 255})
-	grad.AddColorStop(1, color.RGBA{R: 0xfd, G: 0xbb, B: 0x2d, A: 255})
+	for _, stop := range stops {
+		grad.AddColorStop(stop.Offset, stop.Color)
+	}
 
 	ggCtx.SetLineWidth(4)
 	ggCtx.SetLineCapRound()
-	ggCtx.SetRGB(0.1, 0.1, 0.15)
+	// Convert 0-255 to 0-1 for SetRGB
+	ggCtx.SetRGB(float64(strokeColor.R)/255.0, float64(strokeColor.G)/255.0, float64(strokeColor.B)/255.0)
 	ggCtx.DrawRectangle(x, y, width, height)
 	ggCtx.Stroke()
 
 	//Scale width. We want 30 -> 300
-	calcWidth := watts / 450. * 250.
+	calcWidth := value / maxVal * displayMax
 	calcWidth = math.Min(width, calcWidth+30)
 
 	ggCtx.SetFillStyle(grad)
@@ -206,28 +232,33 @@ func drawWattBox(ggCtx *gg.Context, watts float64) {
 	ggCtx.Fill()
 }
 
+func drawWattBox(ggCtx *gg.Context, watts float64) {
+	height, width, x, y := 50., 270., 55., 950.
+	strokeColor := color.RGBA{R: 26, G: 26, B: 26, A: 255} // Approximation from 0.1, 0.1, 0.15 * 255. Actual values: 25, 25, 38
+	// Correct stroke color based on original: 0.1, 0.1, 0.15 -> 25.5, 25.5, 38.25
+	strokeColor = color.RGBA{R: 26, G: 26, B: 38, A: 255}
+
+	stops := []GradientStop{
+		{0, color.RGBA{R: 26, G: 42, B: 252, A: 255}},
+		{0.5, color.RGBA{R: 178, G: 31, B: 31, A: 255}},
+		{1, color.RGBA{R: 253, G: 187, B: 45, A: 255}},
+	}
+
+	drawBox(ggCtx, watts, x, y, height, width, strokeColor, 450.0, 250.0, stops)
+}
+
 func drawHRBox(ggCtx *gg.Context, bpm float64) {
 	height, width, x, y := 50., 270., 395., 950.
-	grad := gg.NewLinearGradient(x, y, x+width, y+height)
+	strokeColor := color.RGBA{R: 38, G: 20, B: 20, A: 255} // Approximation from 0.15, 0.08, 0.08 * 255
+	// Correct stroke color based on original: 0.15, 0.08, 0.08 -> 38.25, 20.4, 20.4
+	strokeColor = color.RGBA{R: 38, G: 20, B: 20, A: 255}
 
-	// https://uigradients.com/#Kyoto
-	grad.AddColorStop(0, color.RGBA{R: 0xc2, G: 0x15, B: 0x0, A: 255})
-	grad.AddColorStop(1, color.RGBA{R: 0xff, G: 0xc5, B: 0x0, A: 255})
+	stops := []GradientStop{
+		{0, color.RGBA{R: 194, G: 21, B: 0, A: 255}},
+		{1, color.RGBA{R: 255, G: 197, B: 0, A: 255}},
+	}
 
-	ggCtx.SetLineWidth(4)
-	ggCtx.SetLineCapRound()
-	ggCtx.SetRGB(0.15, 0.08, 0.08)
-	ggCtx.DrawRectangle(x, y, width, height)
-	ggCtx.Stroke()
-
-	//Scale width. We want 30 -> 300
-	calcWidth := bpm / 200. * 180.
-	calcWidth = math.Min(width, calcWidth+30)
-
-	ggCtx.SetFillStyle(grad)
-	ggCtx.DrawRectangle(x, y, calcWidth, height)
-
-	ggCtx.Fill()
+	drawBox(ggCtx, bpm, x, y, height, width, strokeColor, 200.0, 180.0, stops)
 }
 
 func drawStringDropShadow(ggCtx *gg.Context, s string, x, y float64) {
@@ -252,7 +283,7 @@ func scaleGPS(lat float64, long float64) (float64, float64) {
 	//y = y / 71.196104
 	long = long * scaleFactor * normalizeFactor
 
-	return lat + 1050, long + 1625
+	return lat + 1050, long + 1825
 }
 
 type coord struct {
@@ -276,6 +307,3 @@ func drawMap(coords []coord) image.Image {
 
 	return ggCtx.Image()
 }
-
-// Want 42.291441 to be 0
-// want 42.291723 to be 1
