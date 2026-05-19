@@ -90,6 +90,18 @@ func main() {
 					fmt.Printf("SAW BIG TIME %v at %d. The resulting video will be messed up", timeDiff, i)
 				}
 
+				// Lap detection
+				distToLapStart := dist(startLat, startLong, pt.Lat, pt.Long)
+				if distToLapStart < distLatch && !lapLatch {
+					// new lap detected
+					lapLatch = true
+					fmt.Printf("New lap found at %d\n", i)
+					lapCounter++
+				} else if distToLapStart > distLatch && lapLatch {
+					// far enough from lap start toggle the latch
+					lapLatch = false
+				}
+
 				// Interpolate data between each trackpoint to make video smoother
 				fts = append(fts, frameTelemetry{
 					Power: pt.Power,
@@ -97,6 +109,8 @@ func main() {
 					HR:    pt.HR,
 					Lat:   pt.Lat,
 					Long:  pt.Long,
+					Dist:  pt.Dist,
+					Lap:   lapCounter,
 				})
 				fts = append(fts, frameTelemetry{
 					Power: infill(pt.Power, ptNext.Power, 0.8),
@@ -104,6 +118,8 @@ func main() {
 					HR:    infill(pt.HR, ptNext.HR, 0.8),
 					Lat:   infill(pt.Lat, ptNext.Lat, 0.8),
 					Long:  infill(pt.Long, ptNext.Long, 0.8),
+					Dist:  infill(pt.Dist, ptNext.Dist, 0.8),
+					Lap:   lapCounter,
 				})
 				fts = append(fts, frameTelemetry{
 					Power: infill(pt.Power, ptNext.Power, 0.6),
@@ -111,6 +127,8 @@ func main() {
 					HR:    infill(pt.HR, ptNext.HR, 0.6),
 					Lat:   infill(pt.Lat, ptNext.Lat, 0.6),
 					Long:  infill(pt.Long, ptNext.Long, 0.6),
+					Dist:  infill(pt.Dist, ptNext.Dist, 0.6),
+					Lap:   lapCounter,
 				})
 				fts = append(fts, frameTelemetry{
 					Power: infill(pt.Power, ptNext.Power, 0.4),
@@ -118,6 +136,8 @@ func main() {
 					HR:    infill(pt.HR, ptNext.HR, 0.4),
 					Lat:   infill(pt.Lat, ptNext.Lat, 0.4),
 					Long:  infill(pt.Long, ptNext.Long, 0.4),
+					Dist:  infill(pt.Dist, ptNext.Dist, 0.4),
+					Lap:   lapCounter,
 				})
 				fts = append(fts, frameTelemetry{
 					Power: infill(pt.Power, ptNext.Power, 0.2),
@@ -125,10 +145,14 @@ func main() {
 					HR:    infill(pt.HR, ptNext.HR, 0.2),
 					Lat:   infill(pt.Lat, ptNext.Lat, 0.2),
 					Long:  infill(pt.Long, ptNext.Long, 0.2),
+					Dist:  infill(pt.Dist, ptNext.Dist, 0.2),
+					Lap:   lapCounter,
 				})
 			}
 		}
 	}
+
+	numLaps := fts[len(fts)-1].Lap
 
 	work := make(chan *frameWork)
 	wg := sync.WaitGroup{}
@@ -136,14 +160,29 @@ func main() {
 	fmt.Printf("Starting %d workers\n", numWorkers)
 	for range numWorkers {
 		wg.Go(func() {
-			font, err := truetype.Parse(gomonobold.TTF)
-			if err != nil {
-				log.Fatal(err)
+			var bigFace font.Face
+			var smallFace font.Face
+			fontFilePath := "./OpenSans-Medium.ttf"
+			if fontBts, err := os.ReadFile(fontFilePath); err == nil {
+				fmt.Printf("Found font file!\n")
+				font, err := truetype.Parse(fontBts)
+				if err != nil {
+					log.Fatal(err)
+				}
+				bigFace = truetype.NewFace(font, &truetype.Options{Size: 65})
+				smallFace = truetype.NewFace(font, &truetype.Options{Size: 45})
+			} else {
+				fmt.Printf("No custom font file, falling back to gomono!\n")
+				// no custom font, fallback to gomono
+				font, err := truetype.Parse(gomonobold.TTF)
+				if err != nil {
+					log.Fatal(err)
+				}
+				bigFace = truetype.NewFace(font, &truetype.Options{Size: 65})
+				smallFace = truetype.NewFace(font, &truetype.Options{Size: 45})
 			}
-			bigFace := truetype.NewFace(font, &truetype.Options{Size: 75})
-			smallFace := truetype.NewFace(font, &truetype.Options{Size: 55})
 			for ft := range work {
-				generateImage(ft.ft, ft.i, miniMap, bigFace, smallFace)
+				generateImage(ft.ft, ft.i, miniMap, bigFace, smallFace, fullDist, numLaps)
 			}
 		})
 	}
@@ -174,19 +213,24 @@ type frameTelemetry struct {
 	HR    float64
 	Lat   float64
 	Long  float64
+	Dist  float64
+	Lap   int
 }
 
-func generateImage(frameTelemetry *frameTelemetry, i int, staticImg image.Image, bigFace, smallFace font.Face) {
+func generateImage(frameTelemetry *frameTelemetry, i int, staticImg image.Image, bigFace, smallFace font.Face, fullDist float64, numLaps int) {
 	ggCtx := gg.NewContextForImage(staticImg)
 	// ggCtx.SetRGBA(0, 0, 0, 0)
 	// ggCtx.Clear()
 	ggCtx.SetRGBA(0, 0, 0, 1)
 	ggCtx.SetFontFace(bigFace)
 	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f mph", frameTelemetry.Speed*MPS_CONVERT), 20, 95)
+	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f m", fullDist-frameTelemetry.Dist), 1550, 95)
 
 	ggCtx.SetFontFace(smallFace)
 	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f", frameTelemetry.Speed*KMPH_CONVERT), 50, 160)
-	drawStringDropShadow(ggCtx, "kph", 200, 160)
+	drawStringDropShadow(ggCtx, "kph", 170, 160)
+
+	drawStringDropShadow(ggCtx, fmt.Sprintf("lap %d / %d", frameTelemetry.Lap, numLaps), 1590, 160)
 
 	drawStringDropShadow(ggCtx, fmt.Sprintf("%04.0f w", frameTelemetry.Power), 55, 1050)
 	drawWattBox(ggCtx, frameTelemetry.Power)
@@ -306,4 +350,8 @@ func drawMap(coords []coord) image.Image {
 	}
 
 	return ggCtx.Image()
+}
+
+func dist(a1, b1, a2, b2 float64) float64 {
+	return math.Sqrt(math.Pow(a2-a1, 2) + math.Pow(b2-b1, 2))
 }

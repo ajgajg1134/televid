@@ -6,8 +6,12 @@ Check out an example video here: https://www.youtube.com/watch?v=6M2JsSgMb5o
 I wrote this so I could stop using Dashware but still have overlay files. It's extremely specialized for my own usage but feel free to take and modify. I'll review PRs but the main purpose of this repo is for my own use-cases so if it's a feature / change that would hinder that then it likely won't be merged.
 
 ## How to use
-1. Download your tcx file from your activity, the easiest way I know is to add "/export_tcx" to the end of a strava activity URL e.g. https://www.strava.com/activities/18171754244/export_tcx
-2. Run the "run.ps1" script (or just read the script and run each command separately) passing the filename of your tcx file as the first parameter. Note that you'll need to have FFMPEG installed and available on your path. The application will generate a bunch of still images from your telemetry at 1920x1080 and then FFMPEG will take those and create a .mov file using the "prores" codec. This codec lets me export the video with transparency so I don't have to fiddle with green screen settings like I did with Dashware.
-3. Take the "output.mov" file and load it into your video editor of choice. At this point you can delete the leftover img files to reclaim some disk space.
+
+1. **Download your TCX file**: The easiest way is to add `/export_tcx` to the end of a Strava activity URL (e.g., `https://www.strava.com/activities/18171754244/export_tcx`).
+2. **Run the script**: Execute `run.ps1` and pass the filename of your TCX file as the first parameter.
+   - **Prerequisite**: Ensure [FFMPEG](https://ffmpeg.org/) is installed and available in your PATH.
+   - **Process**: The application generates 1920x1080 still images from your telemetry, and FFMPEG converts them into a `.mov` file using the `prores` codec.
+   - **Note**: The `prores` codec supports transparency, so you don't need to use green screen settings.
+3. **Import to video editor**: Load `output.mov` into your preferred video editor. You can then delete the generated image files to save space.
 
 Tada!
