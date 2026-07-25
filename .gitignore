@@ -31,5 +31,7 @@ go.work.sum
 # .idea/
 # .vscode/
 
+# Project / Render files
 imgs/
 *.tcx
+*.ttf

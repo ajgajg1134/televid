@@ -15,3 +15,8 @@ I wrote this so I could stop using Dashware but still have overlay files. It's e
 3. **Import to video editor**: Load `output.mov` into your preferred video editor. You can then delete the generated image files to save space.
 
 Tada!
+
+## TODOs
+* Automatically remove zero data at the beginning of recording
+* Bound box and scale mini map
+* Auto-detect end of race and calculate full dist accordingly

@@ -48,34 +48,51 @@ func main() {
 		return
 	}
 
+	//Skip empty start off course
+	activities.Acts.Act[0].Laps[0].Trk.Pt = activities.Acts.Act[0].Laps[0].Trk.Pt[0:]
+
+	//TODO: Fix extra distance from rolling past end
+
 	coords := []coord{}
+	fullDist := 0.0
 
 	// TODO: Move the map builder to use the interpolated points for a cleaner looking map
 	for _, activity := range activities.Acts.Act {
 		for _, lap := range activity.Laps {
-			for _, trackpoint := range lap.Trk.Pt {
-				minLat = math.Min(minLat, trackpoint.Lat)
-				minLong = math.Min(minLat, trackpoint.Long)
+			for _, trackPoint := range lap.Trk.Pt {
+				fullDist = math.Max(float64(fullDist), trackPoint.Dist)
 
-				maxLat = math.Max(maxLat, trackpoint.Lat)
-				maxLong = math.Max(maxLong, trackpoint.Long)
+				minLat = math.Min(minLat, trackPoint.Lat)
+				minLong = math.Min(minLat, trackPoint.Long)
+
+				maxLat = math.Max(maxLat, trackPoint.Lat)
+				maxLong = math.Max(maxLong, trackPoint.Long)
 				coords = append(coords, coord{
-					Lat:  trackpoint.Lat,
-					Long: trackpoint.Long,
+					Lat:  trackPoint.Lat,
+					Long: trackPoint.Long,
 				})
 			}
 		}
 	}
 
-	fmt.Printf("%10.10f lat %10f %10f long %10f\n", minLat, maxLat, minLong, maxLong)
+	// Adjust full dist to remove any extra recording after the finish line
+	fullDist -= 101
+
+	//fmt.Printf("%10.10f lat %10f %10f long %10f\n", minLat, maxLat, minLong, maxLong)
 
 	miniMap := drawMap(coords)
 
 	fts := []frameTelemetry{}
 
+	lapCounter := 1
+	startLat := activities.Acts.Act[0].Laps[0].Trk.Pt[0].Lat
+	startLong := activities.Acts.Act[0].Laps[0].Trk.Pt[0].Long
+	distLatch := 0.0001 // How far away a point can be before it triggers a new lap
+	lapLatch := true
+
 	for _, activity := range activities.Acts.Act {
 		for _, lap := range activity.Laps {
-			limit := 50_000
+			limit := 200_000 // TO ADJUST LIMIT
 			for i := range len(lap.Trk.Pt) - 1 {
 				if i >= limit {
 					break
@@ -188,7 +205,7 @@ func main() {
 	}
 
 	for i, ft := range fts {
-		if i%10 == 0 {
+		if i%100 == 0 {
 			fmt.Printf("%d / %d %0.2f%%\n", i, len(fts), float64(i)/float64(len(fts))*100.0)
 		}
 		work <- &frameWork{ft: &ft, i: i}
@@ -224,7 +241,7 @@ func generateImage(frameTelemetry *frameTelemetry, i int, staticImg image.Image,
 	ggCtx.SetRGBA(0, 0, 0, 1)
 	ggCtx.SetFontFace(bigFace)
 	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f mph", frameTelemetry.Speed*MPS_CONVERT), 20, 95)
-	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f m", fullDist-frameTelemetry.Dist), 1550, 95)
+	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f m", math.Min(fullDist-frameTelemetry.Dist, 0)), 1550, 95)
 
 	ggCtx.SetFontFace(smallFace)
 	drawStringDropShadow(ggCtx, fmt.Sprintf("%3.0f", frameTelemetry.Speed*KMPH_CONVERT), 50, 160)
@@ -318,7 +335,7 @@ func drawStringDropShadow(ggCtx *gg.Context, s string, x, y float64) {
 func scaleGPS(lat float64, long float64) (float64, float64) {
 	// technically this should probably use minLat and minLong and the scale factor is 1 / (max - min)
 	normalizeFactor := (1. / (maxLat - minLat))
-	scaleFactor := 275. // How tall in pixels
+	scaleFactor := 200. // How tall in pixels the minimap is
 	lat = lat - minLat
 	lat = lat * normalizeFactor * -1 * scaleFactor
 
@@ -327,7 +344,8 @@ func scaleGPS(lat float64, long float64) (float64, float64) {
 	//y = y / 71.196104
 	long = long * scaleFactor * normalizeFactor
 
-	return lat + 1050, long + 1825
+	// Adjust these numbers to move the minimap around
+	return lat + 1050, long + 1650
 }
 
 type coord struct {
